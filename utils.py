@@ -18,6 +18,7 @@ HF_FINETUNED_MODEL = "https://s3.amazonaws.com/models.huggingface.co/transfer-le
 
 logger = logging.getLogger(__file__)
 
+# todo
 def download_pretrained_model():
     """ Download and extract finetuned model from S3 """
     resolved_archive_file = cached_path(HF_FINETUNED_MODEL)
