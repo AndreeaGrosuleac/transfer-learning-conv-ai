@@ -56,7 +56,9 @@ def add_special_tokens_(model, tokenizer):
 def build_input_from_segments(persona, history, reply, tokenizer, lm_labels=False, with_eos=True):
     """ Build a sequence of input from 3 segments: persona, history and last reply. """
     bos, eos, speaker1, speaker2 = tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS[:-1])
+    # de forma s = [bos, *(every token in persona), history, reply, eos]
     sequence = [[bos] + list(chain(*persona))] + history + [reply + ([eos] if with_eos else [])]
+    # de forma [s0, speaker1, s1, speaker2, ...]
     sequence = [sequence[0]] + [[speaker2 if (len(sequence)-i) % 2 else speaker1] + s for i, s in enumerate(sequence[1:])]
     instance = {}
     instance["input_ids"] = list(chain(*sequence))
@@ -64,7 +66,7 @@ def build_input_from_segments(persona, history, reply, tokenizer, lm_labels=Fals
     instance["mc_token_ids"] = len(instance["input_ids"]) - 1
     instance["lm_labels"] = [-100] * len(instance["input_ids"])
     if lm_labels:
-        instance["lm_labels"] = ([-100] * sum(len(s) for s in sequence[:-1])) + [-100] + sequence[-1][1:]
+        instance["lm_labels"] = ([-100] * sum(len(s) for s in sequence[:-1])) + [-100] + sequence[-1][1:] # ???
     return instance
 
 
@@ -74,23 +76,90 @@ def get_data_loaders(args, tokenizer):
 
     logger.info("Build inputs and labels")
     datasets = {"train": defaultdict(list), "valid": defaultdict(list)}
+    
+    # dataset de forma [{"personality":[], "utterances":[{"candidates":[], "history":[]}, {}]}, {}] -- persona_dataset
     for dataset_name, dataset in personachat.items():
         num_candidates = len(dataset[0]["utterances"][0]["candidates"])
+        
         if args.num_candidates > 0 and dataset_name == 'train':
-            num_candidates = min(args.num_candidates, num_candidates)
+            num_candidates = min(args.num_candidates, num_candidates) # -- set number of candidates
+
         for dialog in dataset:
             persona = dialog["personality"].copy()
+            
             for _ in range(args.personality_permutations):
                 for utterance in dialog["utterances"]:
+                    # max_history e pt un ambii speakeri => 2*max_history + 1 (replici in total). Ia ultimele 2*max_history + 1 replici. 
                     history = utterance["history"][-(2*args.max_history+1):]
+                    # ia ultimii num_candidates candidti pentru a il include si pe cel corect (care e ultimul)
                     for j, candidate in enumerate(utterance["candidates"][-num_candidates:]):
+                        # lm_labels e true pentru candidatul corect, in rest fals 
                         lm_labels = bool(j == num_candidates-1)
                         instance = build_input_from_segments(persona, history, candidate, tokenizer, lm_labels)
+                        # instance e de forma: {"input_ids":[], "token_type_ids":[s1, s2, ...], "mc_token_ids": len("inputs_ids"), "lm_labels":[]}
                         for input_name, input_array in instance.items():
                             datasets[dataset_name][input_name].append(input_array)
+                    # TODO cum arata datasets la final
                     datasets[dataset_name]["mc_labels"].append(num_candidates - 1)
                     datasets[dataset_name]["n_candidates"] = num_candidates
-                persona = [persona[-1]] + persona[:-1]  # permuted personalities
+                persona = [persona[-1]] + persona[:-1]  # permuted personalities ??
+
+    logger.info("Pad inputs and convert to Tensor")
+    tensor_datasets = {"train": [], "valid": []}
+    for dataset_name, dataset in datasets.items():
+        dataset = pad_dataset(dataset, padding=tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS[-1]))
+        for input_name in MODEL_INPUTS:
+            tensor = torch.tensor(dataset[input_name])
+            if input_name != "mc_labels":
+                tensor = tensor.view((-1, datasets[dataset_name]["n_candidates"]) + tensor.shape[1:])
+            tensor_datasets[dataset_name].append(tensor)
+
+    logger.info("Build train and validation dataloaders")
+    train_dataset, valid_dataset = TensorDataset(*tensor_datasets["train"]), TensorDataset(*tensor_datasets["valid"])
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset) if args.distributed else None
+    valid_sampler = torch.utils.data.distributed.DistributedSampler(valid_dataset) if args.distributed else None
+    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, shuffle=(not args.distributed))
+    valid_loader = DataLoader(valid_dataset, sampler=valid_sampler, batch_size=args.valid_batch_size, shuffle=False)
+
+    logger.info("Train dataset (Batch, Candidates, Seq length): {}".format(train_dataset.tensors[0].shape))
+    logger.info("Valid dataset (Batch, Candidates, Seq length): {}".format(valid_dataset.tensors[0].shape))
+    return train_loader, valid_loader, train_sampler, valid_sampler
+
+############################## emp_data_loader#################################################################################################
+def get_emp_data_loaders(args, tokenizer):
+    """ Prepare the dataset for training and evaluation """
+    empdataset = get_dataset(tokenizer, args.dataset_path, args.dataset_cache)
+    
+    logger.info("Build inputs and labels")
+    datasets = {"train": defaultdict(list), "valid": defaultdict(list), "test": defaultdict(list)}
+    
+    # dataset de forma [{"emotion":[], "context":[], "utterances":[{"candidates":[], "history":[]}, {}]}, {}] -- empathetic_dataset
+    for dataset_name, dataset in empdataset.items():
+        # num_candidates = len(dataset[0]["utterances"][0]["candidates"])
+        
+        if args.num_candidates > 0 and dataset_name == 'train':
+            num_candidates = args.num_candidates # -- set number of candidates
+
+        for dialog in dataset:
+            emotion = dialog["emotion"].copy()
+            context = dialog["context"].copy()
+            
+            
+            for utterance in dialog["utterances"]:
+                # max_history e pt un ambii speakeri => 2*max_history + 1 (replici in total). Ia ultimele 2*max_history + 1 replici. 
+                history = utterance["history"][-(2*args.max_history+1):]
+                # ia ultimii num_candidates candidti pentru a il include si pe cel corect (care e ultimul)
+                for j, candidate in enumerate(utterance["candidates"][-num_candidates:]):
+                    # lm_labels e true pentru candidatul corect, in rest fals 
+                    lm_labels = bool(j == num_candidates-1)
+                    instance = build_input_from_segments(persona, history, candidate, tokenizer, lm_labels)
+                    # instance e de forma: {"input_ids":[], "token_type_ids":[s1, s2, ...], "mc_token_ids": len("inputs_ids"), "lm_labels":[]}
+                    for input_name, input_array in instance.items():
+                        datasets[dataset_name][input_name].append(input_array)
+                # TODO cum arata datasets la final
+                datasets[dataset_name]["mc_labels"].append(num_candidates - 1)
+                datasets[dataset_name]["n_candidates"] = num_candidates
+                
 
     logger.info("Pad inputs and convert to Tensor")
     tensor_datasets = {"train": [], "valid": []}
