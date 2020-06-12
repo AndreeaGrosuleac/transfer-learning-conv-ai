@@ -19,7 +19,7 @@ from ignite.contrib.handlers.tensorboard_logger import TensorboardLogger, Output
 from transformers import (AdamW, OpenAIGPTDoubleHeadsModel, OpenAIGPTTokenizer,
                                   GPT2DoubleHeadsModel, GPT2Tokenizer, WEIGHTS_NAME, CONFIG_NAME)
 
-from utils import get_dataset, make_logdir
+from utils import get_dataset, make_logdir, get_empd_dataset
 
 SPECIAL_TOKENS = ["<bos>", "<eos>", "<speaker1>", "<speaker2>", "<pad>"]
 ATTR_TO_SPECIAL_TOKEN = {'bos_token': '<bos>', 'eos_token': '<eos>', 'pad_token': '<pad>',
@@ -57,7 +57,13 @@ def build_input_from_segments(persona, history, reply, tokenizer, lm_labels=Fals
     """ Build a sequence of input from 3 segments: persona, history and last reply. """
     bos, eos, speaker1, speaker2 = tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS[:-1])
     # de forma s = [bos, *(every token in persona), history, reply, eos]
-    sequence = [[bos] + list(chain(*persona))] + history + [reply + ([eos] if with_eos else [])]
+    # print(type(persona), "persona", persona)
+    # print(type(history), "hist", history)
+    # print(type(reply), "reply", reply)
+    # return
+    # sequence = [[bos] + list(chain(*persona))] + history + [reply + ([eos] if with_eos else [])]
+    
+    sequence = [[bos] + persona] + history + [reply + ([eos] if with_eos else [])]
     # de forma [s0, speaker1, s1, speaker2, ...]
     sequence = [sequence[0]] + [[speaker2 if (len(sequence)-i) % 2 else speaker1] + s for i, s in enumerate(sequence[1:])]
     instance = {}
@@ -96,6 +102,7 @@ def get_data_loaders(args, tokenizer):
                         # lm_labels e true pentru candidatul corect, in rest fals 
                         lm_labels = bool(j == num_candidates-1)
                         instance = build_input_from_segments(persona, history, candidate, tokenizer, lm_labels)
+                        # return
                         # instance e de forma: {"input_ids":[], "token_type_ids":[s1, s2, ...], "mc_token_ids": len("inputs_ids"), "lm_labels":[]}
                         for input_name, input_array in instance.items():
                             datasets[dataset_name][input_name].append(input_array)
@@ -106,7 +113,7 @@ def get_data_loaders(args, tokenizer):
 
     logger.info("Pad inputs and convert to Tensor")
     tensor_datasets = {"train": [], "valid": []}
-    for dataset_name, dataset in datasets.items():
+    for dataset_name, dataset in datasets.iteritems():
         dataset = pad_dataset(dataset, padding=tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS[-1]))
         for input_name in MODEL_INPUTS:
             tensor = torch.tensor(dataset[input_name])
@@ -128,7 +135,8 @@ def get_data_loaders(args, tokenizer):
 ############################## emp_data_loader#################################################################################################
 def get_emp_data_loaders(args, tokenizer):
     """ Prepare the dataset for training and evaluation """
-    empdataset = get_dataset(tokenizer, args.dataset_path, args.dataset_cache)
+    num_candidates = args.num_candidates
+    empdataset = get_empd_dataset(tokenizer, args.dataset_path, args.dataset_cache, num_candidates=num_candidates)
     
     logger.info("Build inputs and labels")
     datasets = {"train": defaultdict(list), "valid": defaultdict(list), "test": defaultdict(list)}
@@ -136,15 +144,15 @@ def get_emp_data_loaders(args, tokenizer):
     # dataset de forma [{"emotion":[], "context":[], "utterances":[{"candidates":[], "history":[]}, {}]}, {}] -- empathetic_dataset
     for dataset_name, dataset in empdataset.items():
         # num_candidates = len(dataset[0]["utterances"][0]["candidates"])
-        
-        if args.num_candidates > 0 and dataset_name == 'train':
-            num_candidates = args.num_candidates # -- set number of candidates
+        # num_candidates = 1
+        # if args.num_candidates > 0 and dataset_name == 'train':
+        #     num_candidates = args.num_candidates # -- set number of candidates
 
         for dialog in dataset:
             emotion = dialog["emotion"].copy()
             context = dialog["context"].copy()
-            
-            
+            # print(type(context), context)
+
             for utterance in dialog["utterances"]:
                 # max_history e pt un ambii speakeri => 2*max_history + 1 (replici in total). Ia ultimele 2*max_history + 1 replici. 
                 history = utterance["history"][-(2*args.max_history+1):]
@@ -152,7 +160,9 @@ def get_emp_data_loaders(args, tokenizer):
                 for j, candidate in enumerate(utterance["candidates"][-num_candidates:]):
                     # lm_labels e true pentru candidatul corect, in rest fals 
                     lm_labels = bool(j == num_candidates-1)
-                    instance = build_input_from_segments(persona, history, candidate, tokenizer, lm_labels)
+                    # print(type(history), "hist", history)
+                    # print(type(candidate), "reply", candidate)
+                    instance = build_input_from_segments(context, history, candidate, tokenizer, lm_labels)
                     # instance e de forma: {"input_ids":[], "token_type_ids":[s1, s2, ...], "mc_token_ids": len("inputs_ids"), "lm_labels":[]}
                     for input_name, input_array in instance.items():
                         datasets[dataset_name][input_name].append(input_array)
@@ -237,7 +247,7 @@ def train():
         model = DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank)
 
     logger.info("Prepare datasets")
-    train_loader, val_loader, train_sampler, valid_sampler = get_data_loaders(args, tokenizer)
+    train_loader, val_loader, train_sampler, valid_sampler = get_emp_data_loaders(args, tokenizer)
 
     # Training function and trainer
     def update(engine, batch):

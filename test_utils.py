@@ -13,15 +13,15 @@ if __name__ == "__main__":
     tokenizer_class = OpenAIGPTTokenizer 
     tokenizer = tokenizer_class.from_pretrained("openai-gpt")
     logger.info("Start persona dataset") 
-    pers_dataset = get_dataset(tokenizer, "", "./dataset_cache")
+    # pers_dataset = get_dataset(tokenizer, "", "./dataset_cache")
 
     # logger.info("Start emp dataset")
-    # emp_dataset = get_empd_dataset(tokenizer, "", "./emp_dataset_cache")
+    emp_dataset = get_empd_dataset(tokenizer, "", "./test")
     # print(emp_dataset.keys())
     i = 0
-    for u in pers_dataset["train"]:
-        if i == 10:
-            break
-        else:
-            i += 1
-            print(u)
+    # for u in pers_dataset["train"]:
+    #     if i == 10:
+    #         break
+    #     else:
+    #         i += 1
+    #         print(u)

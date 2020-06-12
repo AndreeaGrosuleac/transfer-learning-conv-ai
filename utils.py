@@ -27,7 +27,7 @@ UTTERANCE = 5
 logger = logging.getLogger(__file__)
 
 def replace_comma(text):
-    p = {'_comma_':' ,'}
+    p = {'_comma_':' ,', '..':'.', '...':'.'}
     for k, v in p.items():
         text = text.replace(k,v)
     return text
@@ -118,7 +118,7 @@ def get_empd_dataset(tokenizer, dataset_path, dataset_cache, num_candidates=1):
     dataset_cache = dataset_cache + '_' + type(tokenizer).__name__  # To avoid using GPT cache for GPT-2 and vice-versa
     
     if dataset_cache and os.path.isfile(dataset_cache):
-        print("AOLEU")
+        # print("AOLEU")
         logger.info("Load tokenized dataset from cache at %s", dataset_cache)
         dataset = torch.load(dataset_cache)
     else:
@@ -136,7 +136,15 @@ def get_empd_dataset(tokenizer, dataset_path, dataset_cache, num_candidates=1):
                         dataset["valid"] = read_from_csv(csv_file, num_candidates)
                     if member.name == "empatheticdialogues/test.csv":
                         dataset["test"] = read_from_csv(csv_file, num_candidates)
+        
+        # with open('emp_dataset.csv', 'w') as csv_file:  
+        #     writer = csv.writer(csv_file)
+        #     for key, value in dataset.items():
+        #         for l in value:
+        #             for new_key, new_value in l.items():
+        #                 writer.writerow([new_key, new_value])
 
+        # return
         logger.info("Tokenize and encode the dataset")
         def tokenize(obj):
             if isinstance(obj, str):
