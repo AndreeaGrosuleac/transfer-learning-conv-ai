@@ -67,10 +67,10 @@ def build_input_from_segments(persona, history, reply, tokenizer, lm_labels=Fals
     # de forma [s0, speaker1, s1, speaker2, ...]
     sequence = [sequence[0]] + [[speaker2 if (len(sequence)-i) % 2 else speaker1] + s for i, s in enumerate(sequence[1:])]
     instance = {}
-    instance["input_ids"] = list(chain(*sequence))
-    instance["token_type_ids"] = [speaker2 if i % 2 else speaker1 for i, s in enumerate(sequence) for _ in s]
+    instance["input_ids"] = list(chain(*sequence)) # word tokens
+    instance["token_type_ids"] = [speaker2 if i % 2 else speaker1 for i, s in enumerate(sequence) for _ in s] # segment tokens
     instance["mc_token_ids"] = len(instance["input_ids"]) - 1
-    instance["lm_labels"] = [-100] * len(instance["input_ids"])
+    instance["lm_labels"] = [-100] * len(instance["input_ids"]) # position tokens
     if lm_labels:
         instance["lm_labels"] = ([-100] * sum(len(s) for s in sequence[:-1])) + [-100] + sequence[-1][1:] # ???
     return instance
@@ -101,7 +101,7 @@ def get_data_loaders(args, tokenizer):
                     for j, candidate in enumerate(utterance["candidates"][-num_candidates:]):
                         # lm_labels e true pentru candidatul corect, in rest fals 
                         lm_labels = bool(j == num_candidates-1)
-                        instance = build_input_from_segments(persona, history, candidate, tokenizer, lm_labels)
+                        instance = build_input_from_segments(list(chain(*persona)), history, candidate, tokenizer, lm_labels)
                         # return
                         # instance e de forma: {"input_ids":[], "token_type_ids":[s1, s2, ...], "mc_token_ids": len("inputs_ids"), "lm_labels":[]}
                         for input_name, input_array in instance.items():
@@ -172,10 +172,12 @@ def get_emp_data_loaders(args, tokenizer):
                 
 
     logger.info("Pad inputs and convert to Tensor")
-    tensor_datasets = {"train": [], "valid": []}
+    tensor_datasets = {"train": [], "valid": [], "test": []}
     for dataset_name, dataset in datasets.items():
+        print(dataset_name, dataset.keys())
         dataset = pad_dataset(dataset, padding=tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS[-1]))
         for input_name in MODEL_INPUTS:
+            print(input_name)
             tensor = torch.tensor(dataset[input_name])
             if input_name != "mc_labels":
                 tensor = tensor.view((-1, datasets[dataset_name]["n_candidates"]) + tensor.shape[1:])
@@ -196,7 +198,7 @@ def get_emp_data_loaders(args, tokenizer):
 def train():
     parser = ArgumentParser()
     parser.add_argument("--dataset_path", type=str, default="", help="Path or url of the dataset. If empty download from S3.")
-    parser.add_argument("--dataset_cache", type=str, default='./dataset_cache', help="Path or url of the dataset cache")
+    parser.add_argument("--dataset_cache", type=str, default='./emp_dataset_cache', help="Path or url of the dataset cache")
     parser.add_argument("--model_checkpoint", type=str, default="openai-gpt", help="Path, url or short name of the model")
     parser.add_argument("--num_candidates", type=int, default=2, help="Number of candidates for training")
     parser.add_argument("--max_history", type=int, default=2, help="Number of previous exchanges to keep in history")
@@ -213,6 +215,7 @@ def train():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device (cuda or cpu)")
     parser.add_argument("--fp16", type=str, default="", help="Set to O0, O1, O2 or O3 for fp16 training (see apex documentation)")
     parser.add_argument("--local_rank", type=int, default=-1, help="Local rank for distributed training (-1: not distributed)")
+    parser.add_argument("--model", type=str, default='emo', help="")
     args = parser.parse_args()
 
     # logging is set to INFO (resp. WARN) for main (resp. auxiliary) process. logger.info => log main process only, logger.warning => log all processes
@@ -247,7 +250,10 @@ def train():
         model = DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank)
 
     logger.info("Prepare datasets")
-    train_loader, val_loader, train_sampler, valid_sampler = get_emp_data_loaders(args, tokenizer)
+    if args.model == 'emo':
+        train_loader, val_loader, train_sampler, valid_sampler = get_emp_data_loaders(args, tokenizer)
+    else:
+        train_loader, val_loader, train_sampler, valid_sampler = get_data_loaders(args, tokenizer)
 
     # Training function and trainer
     def update(engine, batch):

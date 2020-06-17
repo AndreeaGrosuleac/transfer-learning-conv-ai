@@ -59,11 +59,13 @@ def read_from_csv(csv_file, num_candidates):
             continue
         
         if row[EMOTION] == last_emotion:
-            candidates = random.choices(all_candidates, k = num_candidates)
-            candidates.append(replace_comma(row[UTTERANCE]))
-            conversation = {"history": deepcopy(history), "candidates": candidates}
-            utterances.append(conversation)
-            history.append(replace_comma(row[UTTERANCE]))            
+            if history_index % 2 == 1:
+                candidates = random.choices(all_candidates, k = num_candidates)
+                candidates.append(replace_comma(row[UTTERANCE]))
+                conversation = {"history": deepcopy(history), "candidates": candidates}
+                utterances.append(conversation)
+            history.append(replace_comma(row[UTTERANCE]))
+            history_index += 1            
         else:
             # append dictionary to data and reinitialize it
             if last_emotion != None:
@@ -75,6 +77,7 @@ def read_from_csv(csv_file, num_candidates):
             last_context = replace_comma(row[CONTEXT])
             utterances = []
             history = [replace_comma(row[UTTERANCE])]
+            history_index = 1
             
     return data
 
@@ -137,7 +140,7 @@ def get_empd_dataset(tokenizer, dataset_path, dataset_cache, num_candidates=1):
                     if member.name == "empatheticdialogues/test.csv":
                         dataset["test"] = read_from_csv(csv_file, num_candidates)
         
-        # with open('emp_dataset.csv', 'w') as csv_file:  
+        # with open('new_emp_dataset.csv', 'w') as csv_file:  
         #     writer = csv.writer(csv_file)
         #     for key, value in dataset.items():
         #         for l in value:
