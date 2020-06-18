@@ -48,7 +48,7 @@ def read_from_csv(csv_file, num_candidates):
     data = []
     i = 0
     last_emotion = None
-    last_context = None
+    # last_context = None
     all_candidates = get_candidates(csv_file)
     csv_file.seek(0)
     reader = csv.reader(csv_file)
@@ -69,12 +69,12 @@ def read_from_csv(csv_file, num_candidates):
         else:
             # append dictionary to data and reinitialize it
             if last_emotion != None:
-                entry = {"emotion": last_emotion, "context": last_context, "utterances": utterances}
+                entry = {"emotion": last_emotion, "utterances": utterances}
                 data.append(entry)
             
             # create data for a new entry in dataset
             last_emotion = row[EMOTION]
-            last_context = replace_comma(row[CONTEXT])
+            # last_context = replace_comma(row[CONTEXT])
             utterances = []
             history = [replace_comma(row[UTTERANCE])]
             history_index = 1
@@ -125,22 +125,28 @@ def get_empd_dataset(tokenizer, dataset_path, dataset_cache, num_candidates=1):
         logger.info("Load tokenized dataset from cache at %s", dataset_cache)
         dataset = torch.load(dataset_cache)
     else:
-        logger.info("Download dataset from %s", dataset_path)
-        empd_file = cached_path(dataset_path)
-        dataset = {}    
-        with tarfile.open(empd_file, "r:gz") as tar:
-            for member in tar:
-                if member.isreg():      # Is it a regular file?
-                    csv_file = io.StringIO(tar.extractfile(member).read().decode('utf-8'))
+        logger.info("Load dataset from %s", 'dataset folder')
+        # empd_file = cached_path(dataset_path)
+        dataset = {}
+        with open('./dataset/curated_train.csv') as train_csv:
+            dataset["train"] = read_from_csv(train_csv, num_candidates)
+        with open('./dataset/curated_valid.csv') as valid_csv:
+            dataset["valid"] = read_from_csv(valid_csv, num_candidates)
+        with open('./dataset/curated_test.csv') as test_csv:
+            dataset["test"] = read_from_csv(test_csv, num_candidates)
+        # with tarfile.open(empd_file, "r:gz") as tar:
+        #     for member in tar:
+        #         if member.isreg():      # Is it a regular file?
+        #             csv_file = io.StringIO(tar.extractfile(member).read().decode('utf-8'))
                     
-                    if member.name == "empatheticdialogues/train.csv":
-                        dataset["train"] = read_from_csv(csv_file, num_candidates)
-                    if member.name == "empatheticdialogues/valid.csv":
-                        dataset["valid"] = read_from_csv(csv_file, num_candidates)
-                    if member.name == "empatheticdialogues/test.csv":
-                        dataset["test"] = read_from_csv(csv_file, num_candidates)
+        #             if member.name == "empatheticdialogues/train.csv":
+        #                 dataset["train"] = read_from_csv(csv_file, num_candidates)
+        #             if member.name == "empatheticdialogues/valid.csv":
+        #                 dataset["valid"] = read_from_csv(csv_file, num_candidates)
+        #             if member.name == "empatheticdialogues/test.csv":
+        #                 dataset["test"] = read_from_csv(csv_file, num_candidates)
         
-        # with open('new_emp_dataset.csv', 'w') as csv_file:  
+        # with open('emp_dataset.csv', 'w') as csv_file:  
         #     writer = csv.writer(csv_file)
         #     for key, value in dataset.items():
         #         for l in value:

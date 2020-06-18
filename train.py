@@ -150,7 +150,7 @@ def get_emp_data_loaders(args, tokenizer):
 
         for dialog in dataset:
             emotion = dialog["emotion"].copy()
-            context = dialog["context"].copy()
+            # context = dialog["context"].copy()
             # print(type(context), context)
 
             for utterance in dialog["utterances"]:
@@ -160,9 +160,9 @@ def get_emp_data_loaders(args, tokenizer):
                 for j, candidate in enumerate(utterance["candidates"][-num_candidates:]):
                     # lm_labels e true pentru candidatul corect, in rest fals 
                     lm_labels = bool(j == num_candidates-1)
-                    # print(type(history), "hist", history)
-                    # print(type(candidate), "reply", candidate)
-                    instance = build_input_from_segments(context, history, candidate, tokenizer, lm_labels)
+                    print(type(emotion))
+                    
+                    instance = build_input_from_segments(emotion, history, candidate, tokenizer, lm_labels)
                     # instance e de forma: {"input_ids":[], "token_type_ids":[s1, s2, ...], "mc_token_ids": len("inputs_ids"), "lm_labels":[]}
                     for input_name, input_array in instance.items():
                         datasets[dataset_name][input_name].append(input_array)
@@ -216,6 +216,7 @@ def train():
     parser.add_argument("--fp16", type=str, default="", help="Set to O0, O1, O2 or O3 for fp16 training (see apex documentation)")
     parser.add_argument("--local_rank", type=int, default=-1, help="Local rank for distributed training (-1: not distributed)")
     parser.add_argument("--model", type=str, default='emo', help="")
+    # perser.add_argument("--data", type=str, default='pc', help="pc, ed+pc, ed")
     args = parser.parse_args()
 
     # logging is set to INFO (resp. WARN) for main (resp. auxiliary) process. logger.info => log main process only, logger.warning => log all processes
