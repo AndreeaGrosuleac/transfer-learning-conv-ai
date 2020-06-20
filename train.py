@@ -56,17 +56,22 @@ def add_special_tokens_(model, tokenizer):
 def build_input_from_segments(persona, history, reply, tokenizer, lm_labels=False, with_eos=True):
     """ Build a sequence of input from 3 segments: persona, history and last reply. """
     bos, eos, speaker1, speaker2 = tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS[:-1])
-    # de forma s = [bos, *(every token in persona), history, reply, eos]
-    # print(type(persona), "persona", persona)
-    # print(type(history), "hist", history)
-    # print(type(reply), "reply", reply)
-    # return
-    # sequence = [[bos] + list(chain(*persona))] + history + [reply + ([eos] if with_eos else [])]
+    custom_pers = ["i am an empathetic chatbot.", "i understand emotions.", "i am friendly.", "i want to help humans."]
     
-    sequence = [[bos] + persona] + history + [reply + ([eos] if with_eos else [])]
+    # de forma s = [bos, *(every token in persona), history, reply, eos]
+    token_persona = []
+    for ut in custom_pers:
+        token_persona.append(tokenizer.convert_tokens_to_ids(tokenizer.tokenize(ut)))
+    # sequence = [[bos] + list(chain(*persona))] + history + [reply + ([eos] if with_eos else [])]
+    # print(token_persona)
+
+    sequence = [[bos] + persona + list(chain(*token_persona))] + history + [reply + ([eos] if with_eos else [])]
     # de forma [s0, speaker1, s1, speaker2, ...]
     sequence = [sequence[0]] + [[speaker2 if (len(sequence)-i) % 2 else speaker1] + s for i, s in enumerate(sequence[1:])]
     instance = {}
+    if len(list(chain(*sequence))) > 512:
+        print("avem o problema")
+        # return 
     instance["input_ids"] = list(chain(*sequence)) # word tokens
     instance["token_type_ids"] = [speaker2 if i % 2 else speaker1 for i, s in enumerate(sequence) for _ in s] # segment tokens
     instance["mc_token_ids"] = len(instance["input_ids"]) - 1
@@ -113,7 +118,7 @@ def get_data_loaders(args, tokenizer):
 
     logger.info("Pad inputs and convert to Tensor")
     tensor_datasets = {"train": [], "valid": []}
-    for dataset_name, dataset in datasets.iteritems():
+    for dataset_name, dataset in datasets.items():
         dataset = pad_dataset(dataset, padding=tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS[-1]))
         for input_name in MODEL_INPUTS:
             tensor = torch.tensor(dataset[input_name])
@@ -156,11 +161,13 @@ def get_emp_data_loaders(args, tokenizer):
             for utterance in dialog["utterances"]:
                 # max_history e pt un ambii speakeri => 2*max_history + 1 (replici in total). Ia ultimele 2*max_history + 1 replici. 
                 history = utterance["history"][-(2*args.max_history+1):]
+                if len(list(chain(*history))) > 450:
+                    print("aaa")
                 # ia ultimii num_candidates candidti pentru a il include si pe cel corect (care e ultimul)
                 for j, candidate in enumerate(utterance["candidates"][-num_candidates:]):
                     # lm_labels e true pentru candidatul corect, in rest fals 
                     lm_labels = bool(j == num_candidates-1)
-                    print(type(emotion))
+                    # print(type(emotion))
                     
                     instance = build_input_from_segments(emotion, history, candidate, tokenizer, lm_labels)
                     # instance e de forma: {"input_ids":[], "token_type_ids":[s1, s2, ...], "mc_token_ids": len("inputs_ids"), "lm_labels":[]}

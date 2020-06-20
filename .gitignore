@@ -11,3 +11,5 @@ runs/
 gpt_personachat_cache_v2/
 *dataset_cache*
 fastText-0.9.2/
+*.bin
+*.vec
