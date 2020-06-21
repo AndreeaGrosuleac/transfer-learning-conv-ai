@@ -8,6 +8,7 @@ from pprint import pformat
 from collections import defaultdict
 from functools import partial
 from tqdm import trange
+from itertools import chain
 
 import torch
 import torch.nn.functional as F
@@ -67,6 +68,7 @@ class TransformerAgent(Agent):
                 model_class = OpenAIGPTDoubleHeadsModel if self.args.eval_type == "hits@1" else OpenAIGPTLMHeadModel
 
             self.model_checkpoint = model_class.from_pretrained(args.model_checkpoint)
+            # self.model_checkpoint = model_class.from_pretrained("openai-gpt")
             self.model_checkpoint.to(args.device)
 
             self.logger.info("Build BPE prefix dictionary")
@@ -126,20 +128,27 @@ class TransformerAgent(Agent):
         if self.args.eval_type == "hits@1" and len(self.candidates) > 0:
             instances = defaultdict(list)
             for candidate, _ in self.candidates:
-                instance = build_input_from_segments(self.persona, self.history, candidate, self.tokenizer)
+                instance = build_input_from_segments(list(chain(*self.persona)), self.history, candidate, self.tokenizer)
+                # instance = build_input_from_segments([], self.history, candidate, self.tokenizer)
                 for input_name, input_array in instance.items():
                     instances[input_name].append(input_array)
 
             inputs = pad_dataset(instances, padding=self.special_tokens_ids[-1])
 
             tensor_inputs = {}
+            print(inputs)
             for input_name in ["input_ids", "mc_token_ids", "token_type_ids"]:
                 tensor = torch.tensor(inputs[input_name], device=self.args.device)
                 tensor = tensor.view((-1, len(self.candidates)) + tensor.shape[1:])
                 tensor_inputs[input_name] = tensor
 
             with torch.no_grad():
+                for key, item in tensor_inputs.items():
+                    print(item.shape)
+                print("model", self.model_checkpoint)
+                print(self.model_checkpoint(**tensor_inputs))
                 mc_logits = self.model_checkpoint(**tensor_inputs)[1]
+    
 
             val, ind = torch.sort(mc_logits[0], descending=True)
 
@@ -152,6 +161,7 @@ class TransformerAgent(Agent):
             # We are in interactive of f1 evaluation mode => just sample
             with torch.no_grad():
                 out_ids = sample_sequence(self.persona, self.history, self.tokenizer, self.model_checkpoint, self.args)
+                # out_ids = sample_sequence([], self.history, self.tokenizer, self.model_checkpoint, self.args)
             out_text = self.tokenizer.decode(out_ids, skip_special_tokens=True,
                                              clean_up_tokenization_spaces=(self.args.eval_type != 'f1'))
             reply = {'text': out_text}
@@ -163,7 +173,7 @@ class TransformerAgent(Agent):
         partial true output. This is used to calculate the per-word perplexity.
         """
         partial_out_ids = self.tokenizer.encode(' '.join(partial_out))
-        instance = build_input_from_segments(self.persona, self.history, partial_out_ids,
+        instance = build_input_from_segments(list(chain(*self.persona)), self.history, partial_out_ids,
                                              self.tokenizer, with_eos=False)
 
         input_ids = torch.tensor(instance["input_ids"], device=self.args.device).unsqueeze(0)

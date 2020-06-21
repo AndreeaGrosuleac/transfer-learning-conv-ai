@@ -19,7 +19,7 @@ from ignite.contrib.handlers.tensorboard_logger import TensorboardLogger, Output
 from transformers import (AdamW, OpenAIGPTDoubleHeadsModel, OpenAIGPTTokenizer,
                                   GPT2DoubleHeadsModel, GPT2Tokenizer, WEIGHTS_NAME, CONFIG_NAME)
 
-from utils import get_dataset, make_logdir, get_empd_dataset
+from utils import get_dataset, make_logdir, get_empd_dataset, download_pretrained_model
 
 SPECIAL_TOKENS = ["<bos>", "<eos>", "<speaker1>", "<speaker2>", "<pad>"]
 ATTR_TO_SPECIAL_TOKEN = {'bos_token': '<bos>', 'eos_token': '<eos>', 'pad_token': '<pad>',
@@ -28,6 +28,8 @@ MODEL_INPUTS = ["input_ids", "mc_token_ids", "lm_labels", "mc_labels", "token_ty
 PADDED_INPUTS = ["input_ids", "lm_labels", "token_type_ids"]
 
 logger = logging.getLogger(__file__)
+
+ONLY_PERS = True
 
 def average_distributed_scalar(scalar, args):
     """ Average a scalar over the nodes if we are in distributed training. We use this for distributed evaluation. """
@@ -59,13 +61,15 @@ def build_input_from_segments(persona, history, reply, tokenizer, lm_labels=Fals
     custom_pers = ["i am an empathetic chatbot.", "i understand emotions.", "i am friendly.", "i want to help humans."]
     
     # de forma s = [bos, *(every token in persona), history, reply, eos]
-    token_persona = []
-    for ut in custom_pers:
-        token_persona.append(tokenizer.convert_tokens_to_ids(tokenizer.tokenize(ut)))
-    # sequence = [[bos] + list(chain(*persona))] + history + [reply + ([eos] if with_eos else [])]
-    # print(token_persona)
+    if not ONLY_PERS:
+        token_persona = []
+        for ut in custom_pers:
+            token_persona.append(tokenizer.convert_tokens_to_ids(tokenizer.tokenize(ut)))
+        sequence = [[bos] + persona + list(chain(*token_persona))] + history + [reply + ([eos] if with_eos else [])]
+    else:
+        # print("fara pers")
+        sequence = [[bos] + persona] + history + [reply + ([eos] if with_eos else [])]
 
-    sequence = [[bos] + persona + list(chain(*token_persona))] + history + [reply + ([eos] if with_eos else [])]
     # de forma [s0, speaker1, s1, speaker2, ...]
     sequence = [sequence[0]] + [[speaker2 if (len(sequence)-i) % 2 else speaker1] + s for i, s in enumerate(sequence[1:])]
     instance = {}
@@ -222,7 +226,7 @@ def train():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device (cuda or cpu)")
     parser.add_argument("--fp16", type=str, default="", help="Set to O0, O1, O2 or O3 for fp16 training (see apex documentation)")
     parser.add_argument("--local_rank", type=int, default=-1, help="Local rank for distributed training (-1: not distributed)")
-    parser.add_argument("--model", type=str, default='emo', help="")
+    parser.add_argument("--model", type=str, default='ed', help="")
     # perser.add_argument("--data", type=str, default='pc', help="pc, ed+pc, ed")
     args = parser.parse_args()
 
@@ -230,6 +234,13 @@ def train():
     logging.basicConfig(level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
     logger.warning("Running process %d", args.local_rank)  # This is a logger.warning: it will be printed by all distributed processes
     logger.info("Arguments: %s", pformat(args))
+
+    
+    if args.model_checkpoint == "openai-gpt":
+        print("tre sa intre aici")
+        if args.model == 'pc_ed':
+            logger.info("Download from pre-trained")
+            args.model_checkpoint = download_pretrained_model()
 
     # Initialize distributed training if needed
     args.distributed = (args.local_rank != -1)
@@ -258,7 +269,7 @@ def train():
         model = DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank)
 
     logger.info("Prepare datasets")
-    if args.model == 'emo':
+    if args.model == 'ed' or args.model == 'pc_ed':
         train_loader, val_loader, train_sampler, valid_sampler = get_emp_data_loaders(args, tokenizer)
     else:
         train_loader, val_loader, train_sampler, valid_sampler = get_data_loaders(args, tokenizer)

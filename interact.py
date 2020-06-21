@@ -16,6 +16,8 @@ from transformers import OpenAIGPTLMHeadModel, OpenAIGPTTokenizer, GPT2LMHeadMod
 from train import SPECIAL_TOKENS, build_input_from_segments, add_special_tokens_
 from utils import get_dataset, download_pretrained_model
 
+import fasttext
+
 def top_filtering(logits, top_k=0., top_p=0.9, threshold=-float('Inf'), filter_value=-float('Inf')):
     """ Filter a distribution of logits using top-k, top-p (nucleus) and/or threshold filtering
         Args:
@@ -73,7 +75,11 @@ def sample_sequence(personality, history, tokenizer, model, args, current_output
         logits = top_filtering(logits, top_k=args.top_k, top_p=args.top_p)
         probs = F.softmax(logits, dim=-1)
 
-        prev = torch.topk(probs, 1)[1] if args.no_sample else torch.multinomial(probs, 1)
+        if args.no_sample == 'store_true':
+            prev = torch.topk(probs, 1)[1]
+        else:
+            prev = torch.multinomial(probs, 1)
+        # prev = torch.topk(probs, 1)[1] if args.no_sample else torch.multinomial(probs, 1)
         if i < args.min_length and prev.item() in special_tokens_ids:
             while prev.item() in special_tokens_ids:
                 if probs.max().item() == 1:
@@ -96,12 +102,12 @@ def run():
     parser.add_argument("--max_history", type=int, default=2, help="Number of previous utterances to keep in history")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device (cuda or cpu)")
 
-    parser.add_argument("--no_sample", action='store_true', help="Set to use greedy decoding instead of sampling")
+    parser.add_argument("--no_sample", action='store_false', help="Set to use greedy decoding instead of sampling")
     parser.add_argument("--max_length", type=int, default=20, help="Maximum length of the output utterances")
     parser.add_argument("--min_length", type=int, default=1, help="Minimum length of the output utterances")
     parser.add_argument("--seed", type=int, default=0, help="Seed")
     parser.add_argument("--temperature", type=int, default=0.7, help="Sampling softmax temperature")
-    parser.add_argument("--top_k", type=int, default=0, help="Filter top-k tokens before sampling (<=0: no filtering)")
+    parser.add_argument("--top_k", type=int, default=4, help="Filter top-k tokens before sampling (<=0: no filtering)")
     parser.add_argument("--top_p", type=float, default=0.9, help="Nucleus filtering (top-p) before sampling (<=0.0: no filtering)")
     args = parser.parse_args()
 
@@ -129,25 +135,51 @@ def run():
     model.to(args.device)
     add_special_tokens_(model, tokenizer)
 
-    logger.info("Sample a personality")
-    dataset = get_dataset(tokenizer, args.dataset_path, args.dataset_cache)
-    personalities = [dialog["personality"] for dataset in dataset.values() for dialog in dataset]
-    personality = random.choice(personalities)
-    logger.info("Selected personality: %s", tokenizer.decode(chain(*personality)))
+    # logger.info("Sample a personality")
+    # dataset = get_dataset(tokenizer, args.dataset_path, args.dataset_cache)
+    # personalities = [dialog["personality"] for dataset in dataset.values() for dialog in dataset]
+    # personality = random.choice(personalities)
+    # logger.info("Selected personality: %s", tokenizer.decode(chain(*personality)))
+
+    emo_model = fasttext.load_model("fast_text_model.bin")
 
     history = []
+    raw_history = []
+    flag_for_context = False
     while True:
+        if not flag_for_context:
+            print('Hi! How are you feeling today?')
+    
         raw_text = input(">>> ")
+
         while not raw_text:
             print('Prompt should not be empty!')
             raw_text = input(">>> ")
-        history.append(tokenizer.encode(raw_text))
-        with torch.no_grad():
-            out_ids = sample_sequence(personality, history, tokenizer, model, args)
-        history.append(out_ids)
-        history = history[-(2*args.max_history+1):]
-        out_text = tokenizer.decode(out_ids, skip_special_tokens=True)
-        print(out_text)
+        if not flag_for_context:
+            context = raw_text
+        
+        # print(context)
+
+        if flag_for_context:
+            history.append(tokenizer.encode(raw_text))
+            raw_history.append(raw_text)
+        
+        text_to_predict = context
+        for hist in raw_history[-(2*args.max_history+1):]:
+            text_to_predict = text_to_predict + hist
+        emotion = emo_model.predict(text_to_predict)
+        print(emotion[0][0].split('__')[2])
+        emotion = tokenizer.encode(emotion[0][0].split('__')[2])
+
+        if flag_for_context:
+            with torch.no_grad():
+                out_ids = sample_sequence(emotion, history, tokenizer, model, args)
+            history.append(out_ids)
+            history = history[-(2*args.max_history+1):]
+            out_text = tokenizer.decode(out_ids, skip_special_tokens=True)
+            print(out_text)
+        else:
+            flag_for_context = True
 
 
 if __name__ == "__main__":
